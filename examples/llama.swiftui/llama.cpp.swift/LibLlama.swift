@@ -52,6 +52,7 @@ actor LlamaContext {
     }
 
     deinit {
+        print("💀 LlamaContext 正在析构，释放 C++ 内存...")
         llama_sampler_free(sampling)
         llama_batch_free(batch)
         llama_model_free(model)

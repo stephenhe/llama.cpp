@@ -52,11 +52,32 @@ class LocalLLMManager: ObservableObject {
     }
     
     // 系统提示词 (System Prompt) - 定义 App 的人格和输出格式
+//    private let systemPrompt = """
+//    你是一个智能记账助手。
+//    用户输入一段自然语言，你提取其中的【消费项目】、【金额】和【类别】。
+//    请严格输出 JSON 格式，不要包含 Markdown 标记，不要说废话。
+//    格式示例：{"item": "打车", "price": 35.5, "category": "交通"}
+//    """
+    
     private let systemPrompt = """
-    你是一个智能记账助手。
-    用户输入一段自然语言，你提取其中的【消费项目】、【金额】和【类别】。
-    请严格输出 JSON 格式，不要包含 Markdown 标记，不要说废话。
-    格式示例：{"item": "打车", "price": 35.5, "category": "交通"}
+    你是一个手机智能助手。请分析用户的自然语言指令，判断用户想要执行什么操作。
+    支持的操作（Tool）有以下几种：
+    1. "accounting": 记账。参数：item(项目), price(金额)
+    2. "alarm": 设闹钟。参数：time(时间字符串), label(备注)
+    3. "note": 记备忘。参数：content(内容)
+    4. "chat": 普通聊天。参数：reply(回复内容)
+
+    请严格输出 JSON 格式：
+    {
+        "tool": "accounting",
+        "args": { "item": "咖啡", "price": 25 }
+    }
+    或者
+    {
+        "tool": "chat",
+        "args": { "reply": "你好呀！" }
+    }
+    不要包含 Markdown，直接输出 JSON。
     """
 
     // MARK: - 初始化
@@ -100,7 +121,8 @@ class LocalLLMManager: ObservableObject {
         self.messageLog += "Loading model: \(modelUrl.lastPathComponent)...\n"
         
         // 放到后台线程加载，避免卡 UI
-        await Task.detached(priority: .userInitiated) {
+        await Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self = self else { return }
             do {
                 // 调用底层 C++ 初始化
                 // 注意：假设 LlamaContext.create_context 是静态方法
@@ -272,28 +294,41 @@ class LocalLLMManager: ObservableObject {
         let cleanText = fullText.replacingOccurrences(of: "<|im_end|>", with: "")
                                 .replacingOccurrences(of: "<|endoftext|>", with: "")
         
+        guard let data = cleanText.data(using: .utf8) else { return }
+        
         await MainActor.run {
             self.isBusy = false
             self.messageLog += "\n"
-            
-            // 简单的 JSON 提取逻辑 (查找最外层的一对花括号)
-            if let jsonRangeStart = cleanText.range(of: "{"),
-               let jsonRangeEnd = cleanText.range(of: "}", options: .backwards) {
+            do {
+                // ✅ 开始解码
+                let response = try JSONDecoder().decode(LLMResponse.self, from: data)
                 
-                let jsonString = String(cleanText[jsonRangeStart.lowerBound..<jsonRangeEnd.upperBound])
-                
-                // 尝试解码
-                if let data = jsonString.data(using: .utf8) {
-                    do {
-                        let expense = try JSONDecoder().decode(ExpenseItem.self, from: data)
-                        self.parsedExpense = expense
-                        print("✅ 业务数据提取成功: \(expense.item) - \(expense.price)")
-                    } catch {
-                        print("⚠️ JSON 解析失败: \(error)")
-                    }
+                // ✅ 路由分发 (编译器会强制你处理所有 case，非常安全)
+                switch response.intent {
+                case .accounting(let args):
+                    // 这里的 args 自动就是 AccountingArgs 类型
+                    print("💰 记账: \(args.item) - ¥\(args.price)")
+                    // self.parsedExpense = ...
+                    
+                case .alarm(let args):
+                    print("⏰ 设闹钟: \(args.time) 备注: \(args.label ?? "无")")
+                    
+                case .note(let args):
+                    print("📝 记备忘: \(args.content)")
+                    
+                case .chat(let args):
+                    // 闲聊直接显示
+                    self.messageLog += "\n🤖: \(args.reply)"
+                    
+                case .unknown:
+                    print("❓ 意图无法识别")
                 }
-            } else {
-                print("⚠️ 未找到 JSON 结构")
+                
+            } catch {
+                print("JSON 解析失败: \(error)")
+                // 如果解析失败，说明模型可能没按 JSON 格式说话，
+                // 此时可以把 cleanText 直接当做普通回复显示出来做兜底
+                self.messageLog += "\n(非结构化回复): \(cleanText)"
             }
         }
     }
