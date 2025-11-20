@@ -52,6 +52,7 @@
 		DD84C9FC2D747FED007778EC /* llama.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = llama.xcframework; path = "../../build-apple/llama.xcframework"; sourceTree = "<group>"; };
 		DF2D2FE72B4A59BE00FCB72D /* llama.cpp */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = llama.cpp; path = ../..; sourceTree = "<group>"; };
 		E08E2A652ECEF1A7006DC43F /* AIChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatView.swift; sourceTree = "<group>"; };
+		E08E2A6F2ECF3CA1006DC43F /* llama-swiftui-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "llama-swiftui-Info.plist"; sourceTree = SOURCE_ROOT; };
 		F1FE20E12B465EC900B45541 /* LoadCustomButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadCustomButton.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -96,6 +97,7 @@
 		8A1C83752AC328BD0096AF73 /* llama.swiftui */ = {
 			isa = PBXGroup;
 			children = (
+				E08E2A6F2ECF3CA1006DC43F /* llama-swiftui-Info.plist */,
 				E08E2A5E2ECED04A006DC43F /* Services */,
 				8A3F84102AC4BD85005E2EE8 /* Resources */,
 				8A9F7C4B2AC332DC008AE1EA /* Models */,
@@ -381,6 +383,9 @@
 				DEVELOPMENT_TEAM = 5HZ5LW5927;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "llama-swiftui-Info.plist";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "我们需要访问麦克风以录制您的语音。";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "我们需要使用语音识别来听取您的指令。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -413,6 +418,9 @@
 				DEVELOPMENT_TEAM = 5HZ5LW5927;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "llama-swiftui-Info.plist";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "我们需要访问麦克风以录制您的语音。";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "我们需要使用语音识别来听取您的指令。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

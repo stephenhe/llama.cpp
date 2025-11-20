@@ -10,9 +10,13 @@ import SwiftUI
 struct AIChatView: View {
     // 引用我们写好的 Manager
     @StateObject var manager = LocalLLMManager()
+    @StateObject var speechService = SpeechService() // 引入语音服务
     
     @State private var inputText: String = ""
     @State private var scrollProxy: ScrollViewProxy? = nil
+    
+    // 是否开启“自动朗读”模式
+    @State private var autoSpeakMode = true
     
     // 简单的消息结构
     struct Message: Identifiable {
@@ -47,6 +51,12 @@ struct AIChatView: View {
                         }
                         
                         Spacer()
+                        
+                        // 朗读开关
+                        Toggle("自动朗读", isOn: $autoSpeakMode)
+                            .labelsHidden()
+                            .toggleStyle(SwitchToggleStyle(tint: .blue))
+                            .frame(width: 50)
                         
                         // 卸载按钮
                         Button(role: .destructive) {
@@ -150,10 +160,19 @@ struct AIChatView: View {
                 // MARK: - 4. 底部输入栏
                 VStack(spacing: 0) {
                     Divider()
+                    // 显示语音识别中的文字预览
+                    if speechService.isRecording {
+                        Text("正在听: \(speechService.detectedText)")
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                            .padding(.top, 8)
+                            .transition(.opacity)
+                    }
                     HStack {
-                        TextField(manager.isModelLoaded ? "例如: 打车花了35" : "请先加载模型...", text: $inputText)
+                        // 文本输入框
+                        TextField("输入指令...", text: $inputText)
                             .textFieldStyle(.roundedBorder)
-                            .disabled(!manager.isModelLoaded || manager.isBusy)
+                            .disabled(speechService.isRecording) // 录音时禁用键盘输入
                         
                         if manager.isBusy {
                             Button {
@@ -165,23 +184,84 @@ struct AIChatView: View {
                                     .foregroundColor(.red)
                             }
                         } else {
-                            Button {
-                                sendMessage()
-                            } label: {
-                                Image(systemName: "arrow.up.circle.fill")
-                                    .resizable()
-                                    .frame(width: 30, height: 30)
-                                    .foregroundColor(manager.isModelLoaded && !inputText.isEmpty ? .blue : .gray)
+                            // --- 语音/发送按钮逻辑 ---
+                            HStack(spacing: 12) {
+                                // 麦克风按钮 (长按说话，或点击切换状态，这里做成点击切换)
+                                Button {
+                                    toggleRecording()
+                                } label: {
+                                    ZStack {
+                                        Circle()
+                                            .fill(speechService.isRecording ? Color.red : Color.blue)
+                                            .frame(width: 35, height: 35)
+                                            // 录音时有个呼吸动画
+                                            .scaleEffect(speechService.isRecording ? 1.2 : 1.0)
+                                            .animation(speechService.isRecording ? Animation.easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .default, value: speechService.isRecording)
+                                        
+                                        Image(systemName: speechService.isRecording ? "waveform" : "mic.fill")
+                                            .foregroundColor(.white)
+                                            .font(.system(size: 18))
+                                    }
+                                }
+                                
+                                // 如果输入框有字，显示发送按钮
+                                if !inputText.isEmpty {
+                                    Button {
+                                        sendMessage()
+                                    } label: {
+                                        Image(systemName: "arrow.up.circle.fill")
+                                            .resizable().frame(width: 30, height: 30).foregroundColor(.blue)
+                                    }
+                                }
                             }
-                            .disabled(!manager.isModelLoaded || inputText.isEmpty)
                         }
                     }
                     .padding()
                 }
                 .background(Color(.systemBackground))
             }
-            .navigationTitle("AI 记账助手")
+            .navigationTitle("Jarvis Lite")
             .navigationBarTitleDisplayMode(.inline)
+        }
+        // 监听 LLM 生成状态，生成完后自动朗读
+        .onChange(of: manager.isBusy) { isBusy in
+            if !isBusy && autoSpeakMode && !manager.lastResponse.isEmpty {
+                // 模型刚忙完，且有回复内容 -> 朗读
+                speechService.speak(text: manager.lastResponse)
+            }
+        }
+        // 监听语音服务有没有报错
+        .alert(item: Binding<AlertItem?>(
+            get: { speechService.errorMsg.map { AlertItem(message: $0) } },
+            set: { _ in speechService.errorMsg = nil }
+        )) { item in
+            Alert(title: Text("错误"), message: Text(item.message), dismissButton: .default(Text("OK")))
+        }
+    }
+    
+    // MARK: - 逻辑控制
+        
+    func toggleRecording() {
+        if speechService.isRecording {
+            // 1. 停止录音
+            speechService.stopRecording()
+            
+            // 2. 稍微延迟一下，把识别到的文字发出去
+            // 为什么要延迟？因为 stopRecording 后 recognitionTask 可能还会回调最后一次结果
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                let text = speechService.detectedText
+                if !text.isEmpty {
+                    // 赋值给 manager 处理
+                    manager.send(text: text)
+                    // 清空识别缓存
+                    speechService.detectedText = ""
+                }
+            }
+        } else {
+            // 停止当前的朗读（如果正在读）
+            speechService.stopSpeaking()
+            // 开始录音
+            try? speechService.startRecording()
         }
     }
     
@@ -212,6 +292,12 @@ struct AIChatView: View {
             try? await manager.loadModel(modelUrl: url)
         }
     }
+}
+
+// 辅助 Alert 结构
+struct AlertItem: Identifiable {
+    var id = UUID()
+    var message: String
 }
 
 #Preview {

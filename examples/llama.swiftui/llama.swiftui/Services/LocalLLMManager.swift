@@ -38,6 +38,8 @@ class LocalLLMManager: ObservableObject {
     @Published var isModelLoaded: Bool = false       // 模型是否加载完毕
     @Published var parsedExpense: ExpenseItem?       // 业务解析结果 (记账卡片数据)
     
+    @Published var lastResponse: String = "" // 新增：专门用于 TTS 朗读的纯净文本
+    
     // 模型列表管理 (保留 LlamaState 的功能)
     @Published var downloadedModels: [Model] = []
     @Published var undownloadedModels: [Model] = []
@@ -311,6 +313,7 @@ class LocalLLMManager: ObservableObject {
         guard let data = cleanText.data(using: .utf8) else { return }
         
         await MainActor.run {
+            self.lastResponse = cleanText // <--- 赋值给这个新变量
             self.isBusy = false
             self.messageLog += "\n"
             do {
