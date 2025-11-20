@@ -184,7 +184,8 @@ class LocalLLMManager: ObservableObject {
         messageLog += "\n🧑‍💻: \(text)\n🤖: "
         
         // 1. 构建 Qwen 格式 Prompt (注入 System Prompt)
-        let fullPrompt = buildQwenPrompt(userText: text)
+//        let fullPrompt = buildQwenPrompt(userText: text)
+        let fullPrompt = buildSummarizePrompt(article: text)
         
         // 2. 开启后台任务 (Task.detached 防止卡死主线程)
         generationTask = Task.detached(priority: .userInteractive) { [weak self] in
@@ -285,6 +286,19 @@ class LocalLLMManager: ObservableObject {
         \(userText)<|im_end|>
         <|im_start|>assistant
         
+        """
+    }
+    
+    /// 构建 Qwen ChatML 格式 Prompt
+    private func buildSummarizePrompt(article: String) -> String {
+        return """
+        <|im_start|>system
+        你是一个阅读助手。请阅读下面的文章，列出 3 个核心要点。
+        <|im_end|>
+        <|im_start|>user
+        \(article)
+        <|im_end|>
+        <|im_start|>assistant
         """
     }
     
