@@ -18,8 +18,9 @@ class LlamaState: ObservableObject {
 
     private var llamaContext: LlamaContext?
     private var defaultModelUrl: URL? {
-        Bundle.main.url(forResource: "ggml-model", withExtension: "gguf", subdirectory: "models")
+//        Bundle.main.url(forResource: "ggml-model", withExtension: "gguf", subdirectory: "models")
         // Bundle.main.url(forResource: "llama-2-7b-chat", withExtension: "Q2_K.gguf", subdirectory: "models")
+        Bundle.main.url(forResource: "qwen2.5-1.5b-instruct-q4_k_m", withExtension: "gguf", subdirectory: "models")
     }
 
     init() {

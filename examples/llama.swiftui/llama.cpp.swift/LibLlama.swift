@@ -335,3 +335,139 @@ actor LlamaContext {
         }
     }
 }
+
+extension LlamaContext {
+
+    /// 核心：流式推理 (包含 Prefill 和 Decode 两个阶段)
+    /// - Parameters:
+    ///   - text: 用户输入的 Prompt
+    ///   - onToken: 回调闭包。返回 true 继续，返回 false 停止。
+    func completion_with_callback(text: String, onToken: (_ token: String) -> Bool) {
+//        guard let context = self.context, let model = self.model else {
+//            print("❌ Error: Context or Model is nil")
+//            return
+//        }
+
+        // 0. 获取 Vocab 指针 (新版 API 必需)
+        guard let vocab = llama_model_get_vocab(model) else {
+            print("❌ Error: Failed to get vocab from model")
+            return
+        }
+        
+        llama_memory_clear(llama_get_memory(context), false)
+
+        // 1. Tokenize (转 Token ID)
+        // 注意：tokenize 方法内部实现也需要确保适配新版，通常它是调用 llama_tokenize
+        let tokens_list = tokenize(text: text, add_bos: true)
+        let n_ctx = llama_n_ctx(context)
+        
+        if tokens_list.isEmpty { return }
+
+        // --- 阶段一：Prefill (一次性处理 Prompt) ---
+        
+        // 初始化一个大容量 batch
+        var batch = llama_batch_init(Int32(tokens_list.count), 0, 1)
+        defer { llama_batch_free(batch) } // 退出作用域时自动释放
+
+        // 手动填充 Batch (替代 common_batch_add，避免链接错误)
+        for i in 0..<tokens_list.count {
+            batch.token[i] = tokens_list[i]
+            batch.pos[i] = Int32(i)
+            batch.n_seq_id[i] = 1
+            // 设置 seq_id (第 0 个序列)
+            if let seq_ids = batch.seq_id[i] {
+                seq_ids[0] = 0
+            }
+            // 只有最后一个 token 需要计算 logits 以预测下一个字
+            batch.logits[i] = (i == tokens_list.count - 1) ? 1 : 0
+        }
+        batch.n_tokens = Int32(tokens_list.count)
+
+        // 解码 Prompt
+        if llama_decode(context, batch) != 0 {
+            print("❌ Error: llama_decode failed during prefill")
+            return
+        }
+
+        // --- 阶段二：Generation (逐字生成) ---
+        
+        var n_cur = Int32(tokens_list.count)
+        let n_len = 2048 // 最大生成长度保护
+        
+        while n_cur < n_len && n_cur < n_ctx {
+            
+            let new_token_id = llama_sampler_sample(self.sampling, context, -1)
+
+            // 1. 标准判断 (llama.cpp 认为的结束)
+            if llama_vocab_is_eog(vocab, new_token_id) {
+                print("✅ LlamaContext: Standard EOG detected.")
+                break
+            }
+            
+            // 2. Qwen 特殊 Token ID 硬核拦截 (可选，但推荐保留作为一层保障)
+            // 这是在 Token ID 层面拦截，不会被字符串拼接问题影响
+            if new_token_id == 151645 || new_token_id == 151643 { // <|im_end|> and <|endoftext|>
+                print("✅ LlamaContext: Qwen special token ID detected (e.g., <|im_end|>).")
+                break
+            }
+            
+            let piece = token_to_piece2(token: new_token_id)
+            
+            // LlamaContext 层面不再做字符串包含判断，只负责把 token 吐出去
+            // 上层 Manager 会处理拼接和字符串模式匹配
+            
+            // 如果上层 onToken 返回 false，则停止底层循环
+            if !onToken(piece) {
+                print("🛑 LlamaContext: Generation stopped by higher layer.")
+                break
+            }
+
+            // D. 准备下一次迭代
+            // 直接复用上面的 batch 变量，手动重置，比 llama_batch_get_one 更快更稳
+            batch.n_tokens = 1
+            batch.token[0] = new_token_id
+            batch.pos[0] = n_cur
+            batch.n_seq_id[0] = 1
+            if let seq_ids = batch.seq_id[0] {
+                seq_ids[0] = 0
+            }
+            batch.logits[0] = 1 // 必须为 true 才能进行下一次采样
+
+            // 解码这一个 Token
+            if llama_decode(context, batch) != 0 {
+                print("❌ Error: llama_decode failed during generation")
+                break
+            }
+
+            n_cur += 1
+        }
+    }
+
+    /// 辅助函数：Token ID 转字符串 (防崩溃版)
+    func token_to_piece2(token: Int32) -> String {
+//        guard let model = self.model else { return "" }
+        
+        // 【新版 API 适配】获取 Vocab
+        guard let vocab = llama_model_get_vocab(model) else { return "" }
+
+        // 1. 越界检查 (防止 SegFault)
+        let n_vocab = llama_vocab_n_tokens(vocab)
+        if token < 0 || token >= n_vocab {
+            return ""
+        }
+
+        // 2. 准备缓冲区 (256 字节足够容纳 UTF-8 字符)
+        var buf = [CChar](repeating: 0, count: 256)
+
+        // 3. 调用 C API (传入 vocab)
+        // 参数：vocab, token, buffer, length, lstrip, special
+        let n_bytes = llama_token_to_piece(vocab, token, &buf, Int32(buf.count), 0, true)
+
+        // 4. 结果处理
+        if n_bytes <= 0 { return "" }
+
+        // 5. 安全转换
+        let data = Data(bytes: &buf, count: Int(n_bytes))
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+}
