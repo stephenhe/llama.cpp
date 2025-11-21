@@ -23,6 +23,10 @@ struct ChatArgs: Codable {
     let reply: String
 }
 
+struct ShortcutArgs: Codable {
+    let name: String
+}
+
 // MARK: - 2. 核心意图枚举 (AIIntent)
 // 你的 handleJsonIntent 方法 switch response.tool，说明 tool 必须是这个枚举
 
@@ -30,6 +34,7 @@ enum AIIntent {
     case accounting(AccountingArgs)
     case alarm(AlarmArgs)
     case chat(ChatArgs)
+    case shortcut(ShortcutArgs)
     case unknown
 }
 
@@ -62,6 +67,11 @@ struct IntentResponse: Decodable {
             // 兼容处理：如果 args 是对象 {"reply": "..."}
             let args = try container.decode(ChatArgs.self, forKey: .args)
             self.tool = .chat(args)
+            
+        case "shortcut":
+            // 兼容处理：如果 args 是对象 {"reply": "..."}
+            let args = try container.decode(ShortcutArgs.self, forKey: .args)
+            self.tool = .shortcut(args)
             
         default:
             self.tool = .unknown

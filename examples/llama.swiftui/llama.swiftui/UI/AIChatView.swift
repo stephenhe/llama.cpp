@@ -16,6 +16,9 @@ struct AIChatView: View {
     @State private var inputText = ""
     @State private var showClearAlert = false
     
+    @State private var showImagePicker = false
+    @State private var selectedImage: UIImage?
+    
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
@@ -152,65 +155,85 @@ struct AIChatView: View {
     }
     
     var inputArea: some View {
-        VStack(spacing: 0) {
-            Divider()
-            
-            // 显示语音识别预览
-            if speechService.isRecording {
-                Text("正在听: \(speechService.detectedText)")
-                    .font(.caption).foregroundColor(.blue)
-                    .padding(.top, 8)
+        HStack {
+            // 📷 新增图片按钮
+            Button {
+                showImagePicker = true
+            } label: {
+                Image(systemName: "photo")
+                    .foregroundColor(.blue)
             }
             
-            HStack {
-                // 文本输入
-                TextField("输入指令...", text: $inputText)
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(viewModel.isBusy || speechService.isRecording)
+            VStack(spacing: 0) {
+                Divider()
                 
-                if viewModel.isBusy {
-                    // 停止按钮
-                    Button { viewModel.stop() } label: {
-                        Image(systemName: "stop.circle.fill")
-                            .resizable().frame(width: 30, height: 30)
-                            .foregroundColor(.red)
-                    }
-                } else {
-                    HStack(spacing: 12) {
-                        // 🎤 语音按钮
-                        Button {
-                            toggleRecording()
-                        } label: {
-                            ZStack {
-                                Circle()
-                                    .fill(speechService.isRecording ? Color.red : Color.blue)
-                                    .frame(width: 35, height: 35)
-                                    .scaleEffect(speechService.isRecording ? 1.2 : 1.0)
-                                    .animation(speechService.isRecording ? Animation.easeInOut(duration: 0.8).repeatForever() : .default, value: speechService.isRecording)
-                                
-                                Image(systemName: speechService.isRecording ? "waveform" : "mic.fill")
-                                    .foregroundColor(.white)
-                                    .font(.system(size: 18))
-                            }
+                // 显示语音识别预览
+                if speechService.isRecording {
+                    Text("正在听: \(speechService.detectedText)")
+                        .font(.caption).foregroundColor(.blue)
+                        .padding(.top, 8)
+                }
+                
+                HStack {
+                    // 文本输入
+                    TextField("输入指令...", text: $inputText)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(viewModel.isBusy || speechService.isRecording)
+                    
+                    if viewModel.isBusy {
+                        // 停止按钮
+                        Button { viewModel.stop() } label: {
+                            Image(systemName: "stop.circle.fill")
+                                .resizable().frame(width: 30, height: 30)
+                                .foregroundColor(.red)
                         }
-                        
-                        // ⬆️ 发送按钮 (仅当有文字时显示)
-                        if !inputText.isEmpty {
+                    } else {
+                        HStack(spacing: 12) {
+                            // 🎤 语音按钮
                             Button {
-                                sendMessage()
+                                toggleRecording()
                             } label: {
-                                Image(systemName: "arrow.up.circle.fill")
-                                    .resizable().frame(width: 30, height: 30)
-                                    .foregroundColor(viewModel.isModelLoaded ? .blue : .gray)
+                                ZStack {
+                                    Circle()
+                                        .fill(speechService.isRecording ? Color.red : Color.blue)
+                                        .frame(width: 35, height: 35)
+                                        .scaleEffect(speechService.isRecording ? 1.2 : 1.0)
+                                        .animation(speechService.isRecording ? Animation.easeInOut(duration: 0.8).repeatForever() : .default, value: speechService.isRecording)
+                                    
+                                    Image(systemName: speechService.isRecording ? "waveform" : "mic.fill")
+                                        .foregroundColor(.white)
+                                        .font(.system(size: 18))
+                                }
                             }
-                            .disabled(!viewModel.isModelLoaded)
+                            
+                            // ⬆️ 发送按钮 (仅当有文字时显示)
+                            if !inputText.isEmpty {
+                                Button {
+                                    sendMessage()
+                                } label: {
+                                    Image(systemName: "arrow.up.circle.fill")
+                                        .resizable().frame(width: 30, height: 30)
+                                        .foregroundColor(viewModel.isModelLoaded ? .blue : .gray)
+                                }
+                                .disabled(!viewModel.isModelLoaded)
+                            }
                         }
                     }
                 }
+                .padding()
             }
-            .padding()
+            .background(Color(.systemBackground))
         }
-        .background(Color(.systemBackground))
+        .sheet(isPresented: $showImagePicker) {
+            ImagePicker(image: $selectedImage)
+        }
+        // 监听图片选择
+        .onChange(of: selectedImage) { newImage in
+            if let img = newImage {
+                processImage(img)
+            }
+        }
+        
     }
     
     // MARK: - 交互逻辑
@@ -237,6 +260,41 @@ struct AIChatView: View {
         } else {
             speechService.stopSpeaking() // 打断正在说的
             try? speechService.startRecording()
+        }
+    }
+    
+    func processImage(_ image: UIImage) {
+        // 1. 开始识别
+        // 先显示一个临时的加载状态
+        inputText = "" // 清空输入框
+        
+        // 这里可以加个全屏 Loading 或者 Toast
+        // print("正在识别图片...")
+        
+        Task {
+            // 2. 调用 Vision 服务提取文字
+            if let extractedText = await VisionService.extractText(from: image) {
+                
+                // 3. 调用整合后的 send 方法
+                // imageContext: OCR 结果
+                // text: 用户的 Prompt (这里给一个默认的引导语，或者弹窗让用户输)
+                
+                // 场景 A: 默认让模型总结
+                let userPrompt = "请分析这张图片的内容。如果是收据或菜单，请提取关键信息。"
+                
+                // 场景 B: 如果你想让用户输入，这里可以弹个框，把 extractedText 存起来，等用户点发送时再带上
+                
+                // 这里演示场景 A (直接发送)
+                await MainActor.run {
+                    viewModel.send(text: userPrompt,
+                                   imageContext: extractedText,
+                                   speechService: speechService)
+                }
+                
+            } else {
+                // 识别失败处理
+                print("未能识别图片内容")
+            }
         }
     }
 }
@@ -282,6 +340,7 @@ struct IntentCard: View {
         default: EmptyView()
         }
     }
+    
 }
 
 #Preview {

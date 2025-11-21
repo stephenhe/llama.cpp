@@ -24,6 +24,7 @@
 		E08E2A752ED0168A006DC43F /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E08E2A742ED0168A006DC43F /* Models.swift */; };
 		E08E2A772ED01A33006DC43F /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E08E2A762ED01A33006DC43F /* ChatViewModel.swift */; };
 		E08E2A792ED020B8006DC43F /* ChatBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = E08E2A782ED020B8006DC43F /* ChatBubble.swift */; };
+		E08E2A7D2ED08D34006DC43F /* ImagePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = E08E2A7C2ED08D34006DC43F /* ImagePicker.swift */; };
 		F1FE20E22B465ECA00B45541 /* LoadCustomButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1FE20E12B465EC900B45541 /* LoadCustomButton.swift */; };
 /* End PBXBuildFile section */
 
@@ -61,6 +62,7 @@
 		E08E2A742ED0168A006DC43F /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		E08E2A762ED01A33006DC43F /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		E08E2A782ED020B8006DC43F /* ChatBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatBubble.swift; sourceTree = "<group>"; };
+		E08E2A7C2ED08D34006DC43F /* ImagePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePicker.swift; sourceTree = "<group>"; };
 		F1FE20E12B465EC900B45541 /* LoadCustomButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadCustomButton.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -160,6 +162,7 @@
 				E08E2A722ECF49C8006DC43F /* AdvancedChatView.swift */,
 				E08E2A762ED01A33006DC43F /* ChatViewModel.swift */,
 				E08E2A782ED020B8006DC43F /* ChatBubble.swift */,
+				E08E2A7C2ED08D34006DC43F /* ImagePicker.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -254,6 +257,7 @@
 			files = (
 				F1FE20E22B465ECA00B45541 /* LoadCustomButton.swift in Sources */,
 				8A907F332AC7138A006146EA /* LibLlama.swift in Sources */,
+				E08E2A7D2ED08D34006DC43F /* ImagePicker.swift in Sources */,
 				8A9F7C4D2AC332EE008AE1EA /* LlamaState.swift in Sources */,
 				8A1C83792AC328BD0096AF73 /* ContentView.swift in Sources */,
 				8A1C83772AC328BD0096AF73 /* llama_swiftuiApp.swift in Sources */,

@@ -54,6 +54,8 @@ class ChatViewModel: ObservableObject {
     1. 【闹钟】(alarm)：相对时间存 "delay_minutes" (Int)，绝对时间存 "time" (HH:mm)。
     2. 【记账】(accounting)：提取 "item" 和 "price"。
     3. 【闲聊】(chat)：**请阅读历史记录**，像正常人一样对话，将回复内容存入 "reply"。
+    4. 【运行指令】(shortcut)：如果用户想执行手机操作（如省电模式、打开支付码），提取指令名称填入 "name"。
+       JSON: {"tool": "shortcut", "args": {"name": "打开省电模式"}}
 
     JSON 格式示例：
     {"tool": "alarm", "args": {"delay_minutes": 10}}
@@ -157,7 +159,205 @@ class ChatViewModel: ObservableObject {
     
     // MARK: - 2. 核心交互 (Send)
     
-    func send(text: String, speechService: SpeechService?) {
+    /// 发送指令 (支持图片内容)
+    /// - Parameters:
+    ///   - text: 用户输入的指令或问题
+    ///   - imageContext: (可选) 图片识别出的文字内容
+    ///   - speechService: 语音服务
+    func send(text: String, imageContext: String? = nil, speechService: SpeechService?) {
+        guard isModelLoaded && !isBusy else { return }
+        
+        self.speechService = speechService
+        self.isBusy = true
+        self.recognizedIntent = nil
+        self.messageLog = "" // 清空实时流显示
+        
+        // --- 1. 构建内容 (核心修改) ---
+        
+        var actualContent = text // 给模型看的内容 (包含 OCR 文本)
+        var displayContent = text // 给用户看的内容 (保持清爽)
+        
+        if let imgText = imageContext {
+            // ✅ 使用优化后的 Prompt
+            actualContent = """
+            [图片上下文]
+            以下是图片OCR识别结果（可能存在排版混乱，请尝试理解语义）：
+            \"\"\"
+            \(imgText)
+            \"\"\"
+            
+            [任务]
+            基于上述图片内容，执行用户指令：\(text)
+            """
+            
+            displayContent = "[图片] \(text)"
+        }
+        
+        // --- 2. 用户消息入库 ---
+        
+        // 使用 uiContent 字段区分展示内容和实际内容
+        let userMsg = ChatMessage(role: .user,
+                                  content: actualContent,   // 存入包含 OCR 的长文本，保持上下文记忆
+                                  uiContent: displayContent) // 界面只显示 "[图片] ..."
+        history.append(userMsg)
+        
+        // --- 3. 构建 Prompt ---
+        // 直接使用 actualContent 构建，模型就能“看见”图片内容了
+        let fullPrompt = buildQwenPrompt(userText: actualContent)
+        
+        print("🚀 Prompt 发送中...")
+        
+        generationTask = Task {
+            var fullResponseBuffer = ""
+            var tempBuffer = ""
+            var ttsBuffer = ""
+            var isJsonMode = false
+            var isFirstToken = true
+            // 🔥 新增：JSON 花括号计数器
+            var braceDepth = 0
+            var hasStartedJSON = false
+            
+            do {
+                let stream = await llmService.streamChat(prompt: fullPrompt)
+                
+                for try await token in stream {
+                    // --- A. 缓冲区过滤 (Qwen 特殊标记) ---
+                    tempBuffer += token
+                    
+                    if tempBuffer.contains("<|im_end|>") || tempBuffer.contains("<|endoftext|>") { break }
+                    
+                    // 如果碎片太短且包含敏感字符，先扣留
+                    if tempBuffer.count < 20 && (tempBuffer.contains("<") || tempBuffer.contains("|")) { continue }
+                    
+                    let cleanToken = tempBuffer
+                    tempBuffer = ""
+                    
+                    fullResponseBuffer += cleanToken
+                    
+                    for char in cleanToken {
+                        if char == "{" {
+                            braceDepth += 1
+                            hasStartedJSON = true
+                        } else if char == "}" {
+                            braceDepth -= 1
+                        }
+                    }
+                    
+                    // 只有当已经开始了 JSON，且深度回到了 0，说明一个完整的 JSON 结束了
+                    if hasStartedJSON && braceDepth <= 0 {
+                        print("✂️ 检测到 JSON 闭合，强制停止生成。")
+                        
+                        // 如果是流式显示，把最后一个 token 加上
+                        // (根据你的 UI 逻辑决定是否需要这一步，通常加上比较好)
+                        await MainActor.run { self.messageLog += cleanToken }
+                        
+                        break // 🚫 立即跳出循环，不再接收后续的重复内容
+                    }
+                    
+                    
+                    // --- B. 首字检测 (JSON vs Chat) ---
+                    if isFirstToken {
+                        let trimmed = cleanToken.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty {
+                            isJsonMode = trimmed.hasPrefix("{")
+                            isFirstToken = false
+                        }
+                    }
+                    
+                    // --- C. UI 刷新与 TTS ---
+                    if isJsonMode {
+                        // JSON 模式：界面不显示流式文字 (或者显示 Loading)
+                        await MainActor.run {
+                            if self.messageLog.isEmpty { self.messageLog = "🔄 正在分析..." }
+                        }
+                    } else {
+                        // 聊天模式：实时刷新
+                        await MainActor.run {
+                            if self.messageLog == "🔄 正在分析..." { self.messageLog = "" }
+                            self.messageLog += cleanToken
+                        }
+                        
+                        ttsBuffer += cleanToken
+                        if shouldSpeak(buffer: ttsBuffer) {
+                            let textToSpeak = ttsBuffer
+                            ttsBuffer = ""
+                            await MainActor.run { self.speechService?.speak(textToSpeak) }
+                        }
+                    }
+                }
+                
+                // --- 4. 生成结束收尾 ---
+                
+                // 清洗最终文本
+                let finalCleanText = fullResponseBuffer.replacingOccurrences(of: "<|im_end|>", with: "")
+                                                       .replacingOccurrences(of: "<|endoftext|>", with: "")
+                
+                if isJsonMode {
+                    // A. JSON 模式：解析意图
+                    let intent = await llmService.parseIntent(from: finalCleanText)
+                    
+                    await MainActor.run {
+                        var display: String? = nil
+                        var hide = false
+                        
+                        switch intent {
+                        case .chat(let args):
+                            display = args.reply
+                            hide = false
+                        case .accounting, .alarm:
+                            hide = true // 指令类消息在气泡列表中隐藏 (因为有卡片)
+                        case .shortcut(let args):
+                            // URL 编码 (防止中文乱码)
+                            let encodedName = args.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+                            if let url = URL(string: "shortcuts://run-shortcut?name=\(encodedName)") {
+                                
+                                // 打开 Shortcuts App
+                                UIApplication.shared.open(url)
+                                
+                                self.speechService?.speak("正在为您运行 \(args.name)")
+                            }
+                            hide = true
+                        case .unknown:
+                            display = finalCleanText // 解析失败显示原文
+                            hide = false
+                        }
+                        
+                        // 存入 AI 回复 (JSON) 以维持上下文
+                        let aiMsg = ChatMessage(role: .assistant,
+                                                content: finalCleanText,
+                                                uiContent: display,
+                                                isHidden: hide)
+                        self.history.append(aiMsg)
+                        self.messageLog = ""
+                        
+                        self.handleIntent(intent)
+                    }
+                } else {
+                    // B. 聊天模式
+                    if !ttsBuffer.isEmpty {
+                        let remaining = ttsBuffer
+                        await MainActor.run { self.speechService?.speak(remaining) }
+                    }
+                    
+                    await MainActor.run {
+                        let aiMsg = ChatMessage(role: .assistant, content: finalCleanText)
+                        self.history.append(aiMsg)
+                        self.messageLog = ""
+                    }
+                }
+                
+            } catch {
+                await MainActor.run {
+                    let errorMsg = ChatMessage(role: .assistant, content: "❌ Error: \(error.localizedDescription)")
+                    self.history.append(errorMsg)
+                }
+            }
+            
+            await MainActor.run { self.isBusy = false }
+        }
+    }
+    
+    private func send(text: String, speechService: SpeechService?) {
         guard isModelLoaded && !isBusy else { return }
         
         self.speechService = speechService
@@ -180,6 +380,10 @@ class ChatViewModel: ObservableObject {
             var ttsBuffer = ""
             var isJsonMode = false
             var isFirstToken = true
+            
+            // 🔥 新增：JSON 花括号计数器
+            var braceDepth = 0
+            var hasStartedJSON = false
             
             do {
                 // ✅✅✅ 核心变化：使用 for await 循环读取流 ✅✅✅
@@ -223,6 +427,26 @@ class ChatViewModel: ObservableObject {
 //                    if cleanToken.isEmpty { continue }
                     
                     fullResponseBuffer += cleanToken
+                    
+                    for char in cleanToken {
+                        if char == "{" {
+                            braceDepth += 1
+                            hasStartedJSON = true
+                        } else if char == "}" {
+                            braceDepth -= 1
+                        }
+                    }
+                    
+                    // 只有当已经开始了 JSON，且深度回到了 0，说明一个完整的 JSON 结束了
+                    if hasStartedJSON && braceDepth <= 0 {
+                        print("✂️ 检测到 JSON 闭合，强制停止生成。")
+                        
+                        // 如果是流式显示，把最后一个 token 加上
+                        // (根据你的 UI 逻辑决定是否需要这一步，通常加上比较好)
+                        await MainActor.run { self.messageLog += cleanToken }
+                        
+                        break // 🚫 立即跳出循环，不再接收后续的重复内容
+                    }
                     
                     // 2. 首字检测模式
                     if isFirstToken {
@@ -272,6 +496,18 @@ class ChatViewModel: ObservableObject {
                             
                         case .accounting, .alarm:
                             // 2. 功能模式：UI 隐藏气泡 (因为有卡片显示了)，但历史要存 JSON
+                            shouldHide = true
+                            
+                        case .shortcut(let args):
+                            // URL 编码 (防止中文乱码)
+                            let encodedName = args.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+                            if let url = URL(string: "shortcuts://run-shortcut?name=\(encodedName)") {
+                                
+                                // 打开 Shortcuts App
+                                UIApplication.shared.open(url)
+                                
+                                self.speechService?.speak("正在为您运行 \(args.name)")
+                            }
                             shouldHide = true
                             
                         case .unknown:
@@ -377,6 +613,17 @@ class ChatViewModel: ObservableObject {
             // 如果是 JSON 解析失败降级来的，可以在这里读
             if args.reply.isEmpty == false {
                 speechService?.speak(args.reply)
+            }
+            
+        case .shortcut(let args):
+            // URL 编码 (防止中文乱码)
+            let encodedName = args.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            if let url = URL(string: "shortcuts://run-shortcut?name=\(encodedName)") {
+                
+                // 打开 Shortcuts App
+                UIApplication.shared.open(url)
+                
+                self.speechService?.speak("正在为您运行 \(args.name)")
             }
             
         case .unknown:
@@ -485,6 +732,58 @@ class ChatViewModel: ObservableObject {
             } else {
                 print("✅ 闹钟已设定")
             }
+        }
+    }
+    
+    // 新增：发送带图片信息的请求
+    func sendImageMessage(imageText: String, userQuery: String) {
+        guard isModelLoaded && !isBusy else { return }
+        
+        // 1. 构建一个特殊的 Prompt，把图片内容作为背景知识注入
+        let imageContext = """
+        【系统检测到用户上传了一张图片，内容如下】：
+        \"\"\"
+        \(imageText)
+        \"\"\"
+        """
+        
+        // 2. 构造历史消息 (让用户看到自己发了图)
+        // 这里我们存一个特殊的标记，或者直接显示"[图片上传]"
+        let userMsg = ChatMessage(role: .user, content: "[上传了图片] \(userQuery)")
+        history.append(userMsg)
+        
+        // 3. 临时插入一条 System 消息告诉模型图片内容
+        // 注意：这条不存入 history，只在本次生成时拼接到 Prompt 里
+        // 或者，我们可以直接修改 buildQwenPrompt 逻辑。
+        
+        // 简单做法：直接伪造用户的输入
+        let augmentedQuery = "\(imageContext)\n\n用户问题：\(userQuery)"
+        
+        // 调用核心发送逻辑 (复用之前的 send 逻辑，只是 text 变了)
+        // 注意：我们需要修改 send 方法，让它支持不重复 append userMsg，
+        // 或者我们直接在这里手动调用底层逻辑。
+        
+        // 为了复用最简单，我们修改 send 方法支持 "内部 Prompt" 和 "显示 Prompt" 分离
+        self.sendInternal(visibleText: "[图片] \(userQuery)", actualPromptText: augmentedQuery)
+    }
+    
+    // 内部通用发送方法
+    private func sendInternal(visibleText: String, actualPromptText: String) {
+        guard isModelLoaded && !isBusy else { return }
+        self.isBusy = true
+        self.recognizedIntent = nil
+        self.messageLog = ""
+        
+        // 1. 存入历史 (显示给用户看的内容)
+        let userMsg = ChatMessage(role: .user, content: visibleText)
+        history.append(userMsg)
+        
+        // 2. 构建 Prompt (使用包含图片信息的实际文本)
+        let fullPrompt = buildQwenPrompt(userText: actualPromptText)
+        
+        generationTask = Task {
+            // ... (这里完全复制之前 send 方法里 Task {} 的内容) ...
+            // 记得把里面的 llmService.streamChat(prompt: fullPrompt) 用在这里
         }
     }
 }
