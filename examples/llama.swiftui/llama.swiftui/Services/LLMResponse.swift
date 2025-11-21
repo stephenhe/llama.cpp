@@ -7,36 +7,7 @@
 
 import Foundation
 
-//// 记账参数
-//struct AccountingArgs: Codable {
-//    let item: String
-//    let price: Double
-//}
-//
-//// 闹钟参数
-//struct AlarmArgs: Codable {
-//    let time: String
-//    let label: String? // 可选
-//}
-//
-//// 备忘录参数
-//struct NoteArgs: Codable {
-//    let content: String
-//}
-//
-//// 闲聊参数
-//struct ChatArgs: Codable {
-//    let reply: String
-//}
-//
-//enum AIIntent {
-//    case accounting(AccountingArgs) // 关联具体的结构体
-//    case alarm(AlarmArgs)
-//    case note(NoteArgs)
-//    case chat(ChatArgs)
-//    case unknown // 处理解析失败或幻觉的情况
-//}
-//
+
 //struct LLMResponse: Decodable {
 //    let intent: AIIntent
 //    

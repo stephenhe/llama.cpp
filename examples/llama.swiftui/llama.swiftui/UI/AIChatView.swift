@@ -8,296 +8,257 @@
 import SwiftUI
 
 struct AIChatView: View {
-    // 引用我们写好的 Manager
-    @StateObject var manager = LocalLLMManager()
-    @StateObject var speechService = SpeechService() // 引入语音服务
+    // 1. 使用功能全集版的 Manager
+    @StateObject var viewModel = ChatViewModel()
+    // 2. 引入语音服务 (View 层持有，注入给 Manager)
+    @StateObject var speechService = SpeechService()
     
-    @State private var inputText: String = ""
-    @State private var scrollProxy: ScrollViewProxy? = nil
-    
-    // 是否开启“自动朗读”模式
-    @State private var autoSpeakMode = true
-    
-    // 简单的消息结构
-    struct Message: Identifiable {
-        let id = UUID()
-        let content: String
-        let isUser: Bool
-    }
-    
-    @State private var messages: [Message] = []
+    @State private var inputText = ""
     
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
+                // 1. 顶部状态
+                statusHeader
                 
-                // MARK: - 1. 顶部控制栏 (新增功能)
-                HStack {
-                    if manager.isBusy && !manager.isModelLoaded {
-                        // 加载中状态
-                        ProgressView()
-                            .padding(.trailing, 5)
-                        Text("正在初始化大脑...")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    } else if manager.isModelLoaded {
-                        // 已加载状态
-                        HStack {
-                            Image(systemName: "cpu.fill")
-                                .foregroundColor(.green)
-                            Text("Qwen-1.5B 在线")
-                                .font(.caption)
-                                .bold()
-                        }
-                        
-                        Spacer()
-                        
-                        // 朗读开关
-                        Toggle("自动朗读", isOn: $autoSpeakMode)
-                            .labelsHidden()
-                            .toggleStyle(SwitchToggleStyle(tint: .blue))
-                            .frame(width: 50)
-                        
-                        // 卸载按钮
-                        Button(role: .destructive) {
-                            withAnimation {
-                                manager.unloadModel()
-                            }
-                        } label: {
-                            Label("卸载", systemImage: "power")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.red)
-                        
-                    } else {
-                        // 未加载状态
-                        HStack {
-                            Image(systemName: "cpu")
-                                .foregroundColor(.gray)
-                            Text("模型未加载")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
-                        
-                        Spacer()
-                        
-                        // 加载菜单 (支持选模型)
-                        Menu {
-                            Section("内置模型") {
-                                Button("Qwen 1.5B (默认)") {
-                                    loadDefaultModel()
-                                }
-                            }
-                            
-                            if !manager.downloadedModels.isEmpty {
-                                Section("已下载模型") {
-                                    ForEach(manager.downloadedModels) { model in
-                                        Button(model.name) {
-                                            loadDocModel(filename: model.filename)
-                                        }
-                                    }
-                                }
-                            }
-                        } label: {
-                            Label("加载模型", systemImage: "arrow.down.circle")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                }
-                .padding()
-                .background(Color(.systemGray6))
-                .animation(.easeInOut, value: manager.isModelLoaded)
-                
-                // MARK: - 2. 业务卡片区域 (记账成功提示)
-                if let expense = manager.parsedExpense {
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                            .font(.title2)
-                        
-                        VStack(alignment: .leading) {
-                            Text(expense.item)
-                                .font(.headline)
-                            Text(expense.category ?? "杂项")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        Text(String(format: "¥%.2f", expense.price))
-                            .font(.title3)
-                            .bold()
-                            .foregroundColor(.blue)
-                    }
-                    .padding()
-                    .background(Color.green.opacity(0.1))
-                    .cornerRadius(12)
-                    .padding()
-                    .transition(.scale.combined(with: .opacity))
+                // 2. 意图卡片 (根据 viewModel.recognizedIntent 变化)
+                if let intent = viewModel.recognizedIntent {
+                    IntentCard(intent: intent)
+                        .padding()
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        // 添加一个 id 确保状态变化时动画能触发
+                        .id(UUID())
                 }
                 
-                // MARK: - 3. 聊天记录区域
+                // 3. 消息列表
                 ScrollViewReader { proxy in
                     ScrollView {
-                        VStack(alignment: .leading) {
-                            Text(manager.messageLog)
-                                .padding()
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .id("bottom") // 用于自动滚动
+                        LazyVStack(spacing: 16) {
+                            // 1. 渲染历史记录 (已完成的对话)
+                            // 确保 ChatMessage 遵循 Identifiable
+                            ForEach(viewModel.history) { msg in
+                                ChatBubble(message: msg)
+                                    .id(msg.id) // 绑定 ID 用于滚动
+                            }
+                            
+                            // 2. 渲染正在生成的流式气泡 (仅在聊天模式且有内容时显示)
+                            // 这里的逻辑是：如果正在生成，且 messageLog 有字，说明是新的、还没存入 history 的内容
+                            if viewModel.isBusy && !viewModel.messageLog.isEmpty {
+                                HStack(alignment: .top, spacing: 10) {
+                                    // 左侧 AI 头像
+                                    Image(systemName: "cpu.fill")
+                                        .padding(6)
+                                        .background(Color.green.opacity(0.2))
+                                        .clipShape(Circle())
+                                        .foregroundColor(.green)
+                                    
+                                    // 流式文字内容
+                                    Text(viewModel.messageLog)
+                                        .padding(12)
+                                        .background(Color(.systemGray6))
+                                        .foregroundColor(.primary)
+                                        .cornerRadius(16)
+                                    
+                                    Spacer()
+                                }
+                                .padding(.horizontal)
+                                .id("streaming_bubble") // 给个 ID 方便滚动
+                            }
+                            
+                            // 3. 底部锚点 (用于自动滚动)
+                            Color.clear
+                                .frame(height: 1)
+                                .id("bottom")
+                        }
+                        .padding(.vertical)
+                    }
+                    .onChange(of: viewModel.history.count) { _ in
+                        withAnimation {
+                            proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     }
-                    .onChange(of: manager.messageLog) { _ in
-                        // 自动滚动到底部
+                    // 监听流式内容变化 -> 滚到底部 (让你看到打字过程)
+                    .onChange(of: viewModel.messageLog) { _ in
                         withAnimation {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     }
                 }
                 
-                // MARK: - 4. 底部输入栏
-                VStack(spacing: 0) {
-                    Divider()
-                    // 显示语音识别中的文字预览
-                    if speechService.isRecording {
-                        Text("正在听: \(speechService.detectedText)")
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                            .padding(.top, 8)
-                            .transition(.opacity)
-                    }
-                    HStack {
-                        // 文本输入框
-                        TextField("输入指令...", text: $inputText)
-                            .textFieldStyle(.roundedBorder)
-                            .disabled(speechService.isRecording) // 录音时禁用键盘输入
-                        
-                        if manager.isBusy {
-                            Button {
-                                manager.stop()
-                            } label: {
-                                Image(systemName: "stop.circle.fill")
-                                    .resizable()
-                                    .frame(width: 30, height: 30)
-                                    .foregroundColor(.red)
-                            }
-                        } else {
-                            // --- 语音/发送按钮逻辑 ---
-                            HStack(spacing: 12) {
-                                // 麦克风按钮 (长按说话，或点击切换状态，这里做成点击切换)
-                                Button {
-                                    toggleRecording()
-                                } label: {
-                                    ZStack {
-                                        Circle()
-                                            .fill(speechService.isRecording ? Color.red : Color.blue)
-                                            .frame(width: 35, height: 35)
-                                            // 录音时有个呼吸动画
-                                            .scaleEffect(speechService.isRecording ? 1.2 : 1.0)
-                                            .animation(speechService.isRecording ? Animation.easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .default, value: speechService.isRecording)
-                                        
-                                        Image(systemName: speechService.isRecording ? "waveform" : "mic.fill")
-                                            .foregroundColor(.white)
-                                            .font(.system(size: 18))
-                                    }
-                                }
-                                
-                                // 如果输入框有字，显示发送按钮
-                                if !inputText.isEmpty {
-                                    Button {
-                                        sendMessage()
-                                    } label: {
-                                        Image(systemName: "arrow.up.circle.fill")
-                                            .resizable().frame(width: 30, height: 30).foregroundColor(.blue)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    .padding()
-                }
-                .background(Color(.systemBackground))
+                // 4. 输入栏
+                inputArea
             }
-            .navigationTitle("Jarvis Lite")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        // 监听 LLM 生成状态，生成完后自动朗读
-        .onChange(of: manager.isBusy) { isBusy in
-            if !isBusy && autoSpeakMode && !manager.lastResponse.isEmpty {
-                // 模型刚忙完，且有回复内容 -> 朗读
-                speechService.speak(manager.lastResponse)
-            }
-        }
-        // 监听语音服务有没有报错
-        .alert(item: Binding<AlertItem?>(
-            get: { speechService.errorMsg.map { AlertItem(message: $0) } },
-            set: { _ in speechService.errorMsg = nil }
-        )) { item in
-            Alert(title: Text("错误"), message: Text(item.message), dismissButton: .default(Text("OK")))
+            .navigationBarHidden(true)
+            // 错误弹窗 (可选)
+            // .alert(...)
         }
     }
     
-    // MARK: - 逻辑控制
-        
-    func toggleRecording() {
-        if speechService.isRecording {
-            // 1. 停止录音
-            speechService.stopRecording()
+    // MARK: - 子视图拆分
+    
+    var statusHeader: some View {
+        HStack {
+            if viewModel.isModelLoaded {
+                Label("Brain Online", systemImage: "cpu.fill")
+                    .foregroundColor(.green)
+                    .font(.caption).bold()
+                Spacer()
+                Button("卸载") {
+                    withAnimation { viewModel.unloadModel() }
+                }
+                .tint(.red)
+                .buttonStyle(.bordered)
+                .font(.caption)
+            } else {
+                Text("Brain Offline")
+                    .foregroundColor(.gray)
+                    .font(.caption)
+                Spacer()
+                // 加载默认模型
+                Button("加载") {
+                    if let url = Bundle.main.url(forResource: "qwen2.5-1.5b-instruct-q4_k_m", withExtension: "gguf", subdirectory: "models") {
+                        Task { try? await viewModel.loadModel(modelUrl: url) }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .font(.caption)
+            }
+        }
+        .padding()
+        .background(Color(.systemGray6))
+    }
+    
+    var inputArea: some View {
+        VStack(spacing: 0) {
+            Divider()
             
-            // 2. 稍微延迟一下，把识别到的文字发出去
-            // 为什么要延迟？因为 stopRecording 后 recognitionTask 可能还会回调最后一次结果
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                let text = speechService.detectedText
-                if !text.isEmpty {
-                    // 赋值给 manager 处理
-//                    manager.send(text: text)
-                    // 清空识别缓存
-                    speechService.detectedText = ""
+            // 显示语音识别预览
+            if speechService.isRecording {
+                Text("正在听: \(speechService.detectedText)")
+                    .font(.caption).foregroundColor(.blue)
+                    .padding(.top, 8)
+            }
+            
+            HStack {
+                // 文本输入
+                TextField("输入指令...", text: $inputText)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(viewModel.isBusy || speechService.isRecording)
+                
+                if viewModel.isBusy {
+                    // 停止按钮
+                    Button { viewModel.stop() } label: {
+                        Image(systemName: "stop.circle.fill")
+                            .resizable().frame(width: 30, height: 30)
+                            .foregroundColor(.red)
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        // 🎤 语音按钮
+                        Button {
+                            toggleRecording()
+                        } label: {
+                            ZStack {
+                                Circle()
+                                    .fill(speechService.isRecording ? Color.red : Color.blue)
+                                    .frame(width: 35, height: 35)
+                                    .scaleEffect(speechService.isRecording ? 1.2 : 1.0)
+                                    .animation(speechService.isRecording ? Animation.easeInOut(duration: 0.8).repeatForever() : .default, value: speechService.isRecording)
+                                
+                                Image(systemName: speechService.isRecording ? "waveform" : "mic.fill")
+                                    .foregroundColor(.white)
+                                    .font(.system(size: 18))
+                            }
+                        }
+                        
+                        // ⬆️ 发送按钮 (仅当有文字时显示)
+                        if !inputText.isEmpty {
+                            Button {
+                                sendMessage()
+                            } label: {
+                                Image(systemName: "arrow.up.circle.fill")
+                                    .resizable().frame(width: 30, height: 30)
+                                    .foregroundColor(viewModel.isModelLoaded ? .blue : .gray)
+                            }
+                            .disabled(!viewModel.isModelLoaded)
+                        }
+                    }
                 }
             }
-        } else {
-            // 停止当前的朗读（如果正在读）
-            speechService.stopSpeaking()
-            // 开始录音
-            try? speechService.startRecording()
+            .padding()
         }
+        .background(Color(.systemBackground))
     }
+    
+    // MARK: - 交互逻辑
     
     func sendMessage() {
         guard !inputText.isEmpty else { return }
-        let text = inputText
+        // 将 speechService 注入给 Manager，以便 Manager 能调用 speak
+        viewModel.send(text: inputText, speechService: speechService)
         inputText = ""
-        
-        // 收起键盘
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        
-//        manager.send(text: text)
     }
     
-    func loadDefaultModel() {
-        if let url = Bundle.main.url(forResource: "qwen2.5-1.5b-instruct-q4_k_m", withExtension: "gguf", subdirectory: "models") {
-            Task {
-                try? await manager.loadModel(modelUrl: url)
+    func toggleRecording() {
+        if speechService.isRecording {
+            speechService.stopRecording()
+            // 延迟一点点，确保拿到最后一句完整的话
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                let text = speechService.detectedText
+                if !text.isEmpty {
+                    viewModel.send(text: text, speechService: speechService)
+                    speechService.detectedText = "" // 清空缓存
+                }
             }
         } else {
-            manager.messageLog += "❌ 找不到内置模型文件，请检查 Bundle。\n"
-        }
-    }
-    
-    func loadDocModel(filename: String) {
-        let url = manager.getDocumentsDirectory().appendingPathComponent(filename)
-        Task {
-            try? await manager.loadModel(modelUrl: url)
+            speechService.stopSpeaking() // 打断正在说的
+            try? speechService.startRecording()
         }
     }
 }
 
-// 辅助 Alert 结构
-struct AlertItem: Identifiable {
-    var id = UUID()
-    var message: String
+// MARK: - 意图卡片组件 (保持不变)
+struct IntentCard: View {
+    let intent: AIIntent
+    
+    var body: some View {
+        switch intent {
+        case .accounting(let args):
+            HStack {
+                Image(systemName: "yensign.circle.fill").font(.largeTitle).foregroundColor(.orange)
+                VStack(alignment: .leading) {
+                    Text("记账成功").font(.headline)
+                    Text(args.item).foregroundColor(.gray)
+                }
+                Spacer()
+                Text(String(format: "%.2f", args.price)).font(.title).bold()
+            }
+            .padding()
+            .background(Color.orange.opacity(0.1))
+            .cornerRadius(12)
+            
+        case .alarm(let args):
+            HStack {
+                Image(systemName: "alarm.fill").font(.largeTitle).foregroundColor(.blue)
+                VStack(alignment: .leading) {
+                    Text("闹钟已设置").font(.headline)
+                    // 优先显示相对时间，如果没有则显示绝对时间
+                    if let delay = args.delay_minutes {
+                        Text("\(delay)分钟后").foregroundColor(.gray).font(.caption)
+                    }
+                }
+                Spacer()
+                // 显示最终计算出的时间 (如果 args.time 有值)
+                Text(args.time ?? "--:--").font(.system(size: 40, design: .rounded)).foregroundColor(.blue)
+            }
+            .padding()
+            .background(Color.blue.opacity(0.1))
+            .cornerRadius(12)
+            
+        default: EmptyView()
+        }
+    }
 }
 
 #Preview {

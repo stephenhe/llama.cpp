@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct AdvancedChatView: View {
-    @StateObject var manager = LocalLLMManager()
+    @StateObject var manager = ChatViewModel()
     @StateObject var speechService = SpeechService()
     @State private var inputText = ""
     

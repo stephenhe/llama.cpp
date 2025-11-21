@@ -21,6 +21,9 @@
 		DD84C9FE2D747FED007778EC /* llama.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = DD84C9FC2D747FED007778EC /* llama.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		E08E2A662ECEF1A7006DC43F /* AIChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E08E2A652ECEF1A7006DC43F /* AIChatView.swift */; };
 		E08E2A732ECF49C9006DC43F /* AdvancedChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E08E2A722ECF49C8006DC43F /* AdvancedChatView.swift */; };
+		E08E2A752ED0168A006DC43F /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E08E2A742ED0168A006DC43F /* Models.swift */; };
+		E08E2A772ED01A33006DC43F /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E08E2A762ED01A33006DC43F /* ChatViewModel.swift */; };
+		E08E2A792ED020B8006DC43F /* ChatBubble.swift in Sources */ = {isa = PBXBuildFile; fileRef = E08E2A782ED020B8006DC43F /* ChatBubble.swift */; };
 		F1FE20E22B465ECA00B45541 /* LoadCustomButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1FE20E12B465EC900B45541 /* LoadCustomButton.swift */; };
 /* End PBXBuildFile section */
 
@@ -55,6 +58,9 @@
 		E08E2A652ECEF1A7006DC43F /* AIChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatView.swift; sourceTree = "<group>"; };
 		E08E2A6F2ECF3CA1006DC43F /* llama-swiftui-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "llama-swiftui-Info.plist"; sourceTree = SOURCE_ROOT; };
 		E08E2A722ECF49C8006DC43F /* AdvancedChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedChatView.swift; sourceTree = "<group>"; };
+		E08E2A742ED0168A006DC43F /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		E08E2A762ED01A33006DC43F /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
+		E08E2A782ED020B8006DC43F /* ChatBubble.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatBubble.swift; sourceTree = "<group>"; };
 		F1FE20E12B465EC900B45541 /* LoadCustomButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadCustomButton.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -152,6 +158,8 @@
 				79E1D9CC2B4CD16E005F8E46 /* InputButton.swift */,
 				E08E2A652ECEF1A7006DC43F /* AIChatView.swift */,
 				E08E2A722ECF49C8006DC43F /* AdvancedChatView.swift */,
+				E08E2A762ED01A33006DC43F /* ChatViewModel.swift */,
+				E08E2A782ED020B8006DC43F /* ChatBubble.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -160,6 +168,7 @@
 			isa = PBXGroup;
 			children = (
 				8A9F7C4C2AC332EE008AE1EA /* LlamaState.swift */,
+				E08E2A742ED0168A006DC43F /* Models.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -248,10 +257,13 @@
 				8A9F7C4D2AC332EE008AE1EA /* LlamaState.swift in Sources */,
 				8A1C83792AC328BD0096AF73 /* ContentView.swift in Sources */,
 				8A1C83772AC328BD0096AF73 /* llama_swiftuiApp.swift in Sources */,
+				E08E2A792ED020B8006DC43F /* ChatBubble.swift in Sources */,
 				E08E2A732ECF49C9006DC43F /* AdvancedChatView.swift in Sources */,
+				E08E2A752ED0168A006DC43F /* Models.swift in Sources */,
 				7FA3D2B32B2EA2F600543F92 /* DownloadButton.swift in Sources */,
 				E08E2A662ECEF1A7006DC43F /* AIChatView.swift in Sources */,
 				79E1D9CD2B4CD16E005F8E46 /* InputButton.swift in Sources */,
+				E08E2A772ED01A33006DC43F /* ChatViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
