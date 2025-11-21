@@ -227,7 +227,7 @@ struct AIChatView: View {
         .onChange(of: manager.isBusy) { isBusy in
             if !isBusy && autoSpeakMode && !manager.lastResponse.isEmpty {
                 // 模型刚忙完，且有回复内容 -> 朗读
-                speechService.speak(text: manager.lastResponse)
+                speechService.speak(manager.lastResponse)
             }
         }
         // 监听语音服务有没有报错
@@ -252,7 +252,7 @@ struct AIChatView: View {
                 let text = speechService.detectedText
                 if !text.isEmpty {
                     // 赋值给 manager 处理
-                    manager.send(text: text)
+//                    manager.send(text: text)
                     // 清空识别缓存
                     speechService.detectedText = ""
                 }
@@ -273,7 +273,7 @@ struct AIChatView: View {
         // 收起键盘
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         
-        manager.send(text: text)
+//        manager.send(text: text)
     }
     
     func loadDefaultModel() {

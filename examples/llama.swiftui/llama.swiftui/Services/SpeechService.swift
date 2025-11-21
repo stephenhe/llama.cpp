@@ -118,34 +118,36 @@ class SpeechService: NSObject, ObservableObject, SFSpeechRecognizerDelegate, AVS
     
     // MARK: - 说 (Text to Speech)
     
-    func speak(text: String) {
-        // 如果正在说话，立即停止（打断）
-        if speechSynthesizer.isSpeaking {
-            speechSynthesizer.stopSpeaking(at: .immediate)
-        }
+    func speak(_ text: String) {
         
-        // 配置音频会话 (确保声音从扬声器出来，而不是听筒)
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-        try? AVAudioSession.sharedInstance().setActive(true)
+        // 确保 AudioSession 设置为播放模式
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .default, options: .duckOthers)
+        try? session.setActive(true)
         
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN") // 中文语音
-        utterance.rate = 0.5 // 语速 (0.0 - 1.0)
+        utterance.rate = 0.52 // 稍微快一点点更自然
         utterance.pitchMultiplier = 1.0 // 音调
         
         speechSynthesizer.speak(utterance)
-        isSpeaking = true
+        
+        if !isSpeaking {
+            self.isSpeaking = true
+        }
     }
     
     func stopSpeaking() {
         speechSynthesizer.stopSpeaking(at: .immediate)
+        isSpeaking = false
     }
     
     // MARK: - AVSpeechSynthesizerDelegate
     // 监听说完的时候
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in
-            self.isSpeaking = false
-        }
+        // 只有当队列为空时，才标记为停止
+        // 注意：这里不能简单设为 false，因为可能队列里还有下一句。
+        // 简单处理：我们通常依赖 UI 状态，或者在 LocalLLMManager 里控制。
+        // 这里为了简化，暂不处理复杂状态，UI 上用 isSpeaking 仅做参考。
     }
 }
