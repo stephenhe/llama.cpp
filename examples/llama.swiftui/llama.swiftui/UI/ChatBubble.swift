@@ -13,11 +13,26 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     let role: ChatRole
     var content: String
     var isTyping = false
+    var date: Date = Date()
+    var uiContent: String?     // UI 显示文本 (仅 Chat 模式有值)
+    var isHidden: Bool = false // 是否在列表中隐藏 (指令类消息设为 true)
+    
+    // 辅助属性：View 层直接调用这个获取显示内容
+    var contentToDisplay: String {
+        return uiContent ?? content
+    }
+        
+    // 辅助属性：判断是否应该在 UI 上显示
+    // System 消息通常是给模型看的“潜台词”，不应该显示在聊天气泡里
+    var isVisible: Bool {
+        return role != .system
+    }
 }
 
 enum ChatRole: String, Codable {
-    case user
-    case assistant
+    case system = "system"       // 💡 新增：系统指令 (导演)
+    case user = "user"           // 用户 (演员A)
+    case assistant = "assistant" // AI (演员B)
 }
 
 struct ChatBubble: View {
@@ -43,7 +58,7 @@ struct ChatBubble: View {
                         .clipShape(bubbleShape)
                 } else {
                     // 2. 显示文本 (支持 Markdown)
-                    Text(.init(message.content)) // .init 开启 Markdown 解析
+                    Text(.init(message.contentToDisplay)) // .init 开启 Markdown 解析
                         .font(.body)
                         .foregroundColor(textColor)
                         .padding(.horizontal, 14)

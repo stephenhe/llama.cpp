@@ -38,7 +38,7 @@ actor LocalLLMService {
             }
             
             // 在 Task 中执行 C++ 调用
-            Task {
+            let task = Task {
                 // 调用底层的 completion_with_callback
                 // 注意：这里假设 context 是线程安全的或已正确加锁
                 // 如果 context 是 actor，需要 await
@@ -57,6 +57,11 @@ actor LocalLLMService {
                 
                 // 完成
                 continuation.finish()
+            }
+            
+            // 2. 【关键】监听流的终止（包括 break 或 cancel）
+            continuation.onTermination = { @Sendable _ in
+                task.cancel() // 传递取消信号给上面的 Task
             }
         }
     }

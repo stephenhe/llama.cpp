@@ -14,6 +14,7 @@ struct AIChatView: View {
     @StateObject var speechService = SpeechService()
     
     @State private var inputText = ""
+    @State private var showClearAlert = false
     
     var body: some View {
         NavigationView {
@@ -33,10 +34,10 @@ struct AIChatView: View {
                 // 3. 消息列表
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 16) {
+                        LazyVStack(spacing: 12) {
                             // 1. 渲染历史记录 (已完成的对话)
                             // 确保 ChatMessage 遵循 Identifiable
-                            ForEach(viewModel.history) { msg in
+                            ForEach(viewModel.history.filter { !$0.isHidden }) { msg in
                                 ChatBubble(message: msg)
                                     .id(msg.id) // 绑定 ID 用于滚动
                             }
@@ -88,9 +89,31 @@ struct AIChatView: View {
                 // 4. 输入栏
                 inputArea
             }
-            .navigationBarHidden(true)
-            // 错误弹窗 (可选)
-            // .alert(...)
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("AI 助手") // 可以加个标题
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showClearAlert = true // 触发弹窗
+                    } label: {
+                        Image(systemName: "trash")
+                            .foregroundColor(.red)
+                    }
+                    // 只有当有历史记录时才显示按钮，避免误触
+                    .disabled(viewModel.history.isEmpty && viewModel.messageLog.isEmpty)
+                }
+            }
+            .alert("确认清空历史？", isPresented: $showClearAlert) {
+                Button("取消", role: .cancel) { }
+                Button("清空", role: .destructive) {
+                    // 调用 Manager 的清空方法
+                    withAnimation {
+                        viewModel.clearChat()
+                    }
+                }
+            } message: {
+                Text("这将删除本次对话的所有记忆，操作无法撤销。")
+            }
         }
     }
     

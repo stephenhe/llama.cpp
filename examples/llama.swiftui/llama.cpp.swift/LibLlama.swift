@@ -344,104 +344,124 @@ extension LlamaContext {
     ///   - text: 用户输入的 Prompt
     ///   - onToken: 回调闭包。返回 true 继续，返回 false 停止。
     func completion_with_callback(text: String, onToken: (_ token: String) -> Bool) {
-//        guard let context = self.context, let model = self.model else {
-//            print("❌ Error: Context or Model is nil")
-//            return
-//        }
+//        guard let context = self.context, let model = self.model else { return }
+        guard let vocab = llama_model_get_vocab(model) else { return }
 
-        // 0. 获取 Vocab 指针 (新版 API 必需)
-        guard let vocab = llama_model_get_vocab(model) else {
-            print("❌ Error: Failed to get vocab from model")
-            return
-        }
-        
+        print("🔵 [Llama] Start Completion. Prompt length: \(text.count)")
+
+        // 1. 必须清空 KV Cache (防止旧对话残留导致位置冲突)
+        // 注意：这里使用的是暴力清空。如果是多轮对话且想保留 Cache，需要更复杂的逻辑。
+        // 但鉴于我们每次都重新拼接 Prompt，暴力清空是最安全的。
+//        llama_kv_cache_clear(context)
+        // 参数含义: context, seq_id(-1代表所有), p0(起始位置0), p1(结束位置-1代表最后)
+//        llama_memory_seq_rm(llama_get_memory(context), -1, 0, -1)
         llama_memory_clear(llama_get_memory(context), false)
-
-        // 1. Tokenize (转 Token ID)
-        // 注意：tokenize 方法内部实现也需要确保适配新版，通常它是调用 llama_tokenize
+        
+        // 2. Tokenize
         let tokens_list = tokenize(text: text, add_bos: true)
-        let n_ctx = llama_n_ctx(context)
-        
         if tokens_list.isEmpty { return }
-
-        // --- 阶段一：Prefill (一次性处理 Prompt) ---
         
-        // 初始化一个大容量 batch
-        var batch = llama_batch_init(Int32(tokens_list.count), 0, 1)
-        defer { llama_batch_free(batch) } // 退出作用域时自动释放
+        let n_ctx = llama_n_ctx(context)
+        let n_batch = 1024 // 建议设为 512 ~ 1024，取决于手机性能
+        
+        // 3. 初始化 Batch
+        var batch = llama_batch_init(Int32(n_batch), 0, 1)
+        defer { llama_batch_free(batch) }
 
-        // 手动填充 Batch (替代 common_batch_add，避免链接错误)
-        for i in 0..<tokens_list.count {
-            batch.token[i] = tokens_list[i]
-            batch.pos[i] = Int32(i)
-            batch.n_seq_id[i] = 1
-            // 设置 seq_id (第 0 个序列)
-            if let seq_ids = batch.seq_id[i] {
-                seq_ids[0] = 0
+        // --- 阶段一：Prefill (分批次预处理) ---
+        // 将长 Prompt 切分成小块喂给模型，防止一次性 decode 失败
+        
+        for i in stride(from: 0, to: tokens_list.count, by: n_batch) {
+            // 清空当前 batch 计数
+            batch.n_tokens = 0
+            
+            let endIndex = min(i + n_batch, tokens_list.count)
+            for j in i..<endIndex {
+                let pos = Int32(j)
+                // 计算 logits 的时机：只有 Prompt 的最后一个 token 才需要计算，以便生成下一个词
+                let isLast = (j == tokens_list.count - 1)
+                
+                // 使用 Helper 函数填充 (见下方)
+                common_batch_add(&batch, tokens_list[j], pos, [0], isLast)
             }
-            // 只有最后一个 token 需要计算 logits 以预测下一个字
-            batch.logits[i] = (i == tokens_list.count - 1) ? 1 : 0
+            
+            // 执行解码
+            if llama_decode(context, batch) != 0 {
+                print("🔴 [Llama] Prefill decode failed at index \(i)")
+                return
+            }
         }
-        batch.n_tokens = Int32(tokens_list.count)
-
-        // 解码 Prompt
-        if llama_decode(context, batch) != 0 {
-            print("❌ Error: llama_decode failed during prefill")
-            return
-        }
+        
+        print("🟢 [Llama] Prefill done. Starting generation...")
 
         // --- 阶段二：Generation (逐字生成) ---
         
         var n_cur = Int32(tokens_list.count)
-        let n_len = 2048 // 最大生成长度保护
+        let max_tokens = 2048 // 防止无限生成
+        var emptyCount = 0
         
-        while n_cur < n_len && n_cur < n_ctx {
+        while n_cur < n_ctx && n_cur < (tokens_list.count + max_tokens) {
             
+            // A. 采样 (获取下一个 Token ID)
             let new_token_id = llama_sampler_sample(self.sampling, context, -1)
 
-            // 1. 标准判断 (llama.cpp 认为的结束)
-            if llama_vocab_is_eog(vocab, new_token_id) {
-                print("✅ LlamaContext: Standard EOG detected.")
+            // B. 判断结束 (ID 级)
+            // 151645 = <|im_end|>, 151643 = <|endoftext|>
+            if new_token_id == 151645 || new_token_id == 151643 || llama_vocab_is_eog(vocab, new_token_id) {
+                print("✅ [Llama] EOS detected (ID: \(new_token_id))")
                 break
             }
-            
-            // 2. Qwen 特殊 Token ID 硬核拦截 (可选，但推荐保留作为一层保障)
-            // 这是在 Token ID 层面拦截，不会被字符串拼接问题影响
-            if new_token_id == 151645 || new_token_id == 151643 { // <|im_end|> and <|endoftext|>
-                print("✅ LlamaContext: Qwen special token ID detected (e.g., <|im_end|>).")
-                break
-            }
-            
+
+            // C. 转字符串并拦截
             let piece = token_to_piece2(token: new_token_id)
-            
-            // LlamaContext 层面不再做字符串包含判断，只负责把 token 吐出去
-            // 上层 Manager 会处理拼接和字符串模式匹配
-            
-            // 如果上层 onToken 返回 false，则停止底层循环
+
+            // D. 回调给上层
             if !onToken(piece) {
-                print("🛑 LlamaContext: Generation stopped by higher layer.")
+                print("🛑 [Llama] Stopped by user/logic.")
                 break
             }
 
-            // D. 准备下一次迭代
-            // 直接复用上面的 batch 变量，手动重置，比 llama_batch_get_one 更快更稳
-            batch.n_tokens = 1
-            batch.token[0] = new_token_id
-            batch.pos[0] = n_cur
-            batch.n_seq_id[0] = 1
-            if let seq_ids = batch.seq_id[0] {
-                seq_ids[0] = 0
-            }
-            batch.logits[0] = 1 // 必须为 true 才能进行下一次采样
+            // E. 准备下一轮解码
+            // 复用 batch，重置为 1 个 token
+            batch.n_tokens = 0
+            common_batch_add(&batch, new_token_id, n_cur, [0], true)
 
-            // 解码这一个 Token
             if llama_decode(context, batch) != 0 {
-                print("❌ Error: llama_decode failed during generation")
+                print("🔴 [Llama] Generation decode failed")
                 break
             }
 
             n_cur += 1
         }
+        
+        print("🏁 [Llama] Generation finished.")
+    }
+    
+    // Swift 原生实现的 batch 填充辅助函数
+    fileprivate func common_batch_add(_ batch: inout llama_batch, _ token: llama_token, _ pos: Int32, _ seq_ids: [Int32], _ logits: Bool) {
+        let i = Int(batch.n_tokens)
+        
+        // 1. 设置 Token
+        batch.token[i] = token
+        
+        // 2. 设置位置
+        batch.pos[i] = pos
+        
+        // 3. 设置序列 ID (n_seq_id)
+        batch.n_seq_id[i] = Int32(seq_ids.count)
+        
+        // 4. 设置具体的序列 ID 值 (通过下标访问指针)
+        if let seqIdsPtr = batch.seq_id[i] {
+            for (idx, seqId) in seq_ids.enumerated() {
+                seqIdsPtr[idx] = seqId
+            }
+        }
+        
+        // 5. 设置 Logits 标志
+        batch.logits[i] = logits ? 1 : 0
+        
+        // 6. 计数器 +1
+        batch.n_tokens += 1
     }
 
     /// 辅助函数：Token ID 转字符串 (防崩溃版)

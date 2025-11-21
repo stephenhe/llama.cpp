@@ -38,25 +38,29 @@ class ChatViewModel: ObservableObject {
         Bundle.main.url(forResource: "qwen2.5-1.5b-instruct-q4_k_m", withExtension: "gguf", subdirectory: "models")
     }
     
+    // 在 Manager 初始化时定义全局人设
+    private let baseSystemPrompt = """
+    你是一个精通Swift语言的资深iOS工程师。
+    回答问题时请优先提供代码示例。
+    """
+    
     // System Prompt
     private let systemPrompt = """
-    你是一个严格的指令解析引擎。你的唯一任务是输出 JSON。
-    **严禁输出任何自然语言解释、Markdown 标记或多余的字符。**
-    
-    【当前时间参考】：{{current_time}}
+    你是一个拥有记忆的智能助手。为了方便程序处理，你必须**仅输出 JSON 格式**。
+        
+    【当前时间】：{{current_time}}
 
-    请根据逻辑判断用户意图：
-    1. 【闹钟】(alarm)：
-       - 相对时间（如“X分钟后”）：**禁止自己计算时间**，直接将分钟数填入 "delay_minutes" (Int)。
-       - 绝对时间（如“早上8点”）：填入 "time" (HH:mm)。
-    2. 【记账】(accounting)：提取 "item" (String) 和 "price" (Double)。
-    3. 【闲聊】(chat)：如果用户输入不是指令，请生成一句简短回复填入 "reply"。
+    请根据用户输入判断意图：
+    1. 【闹钟】(alarm)：相对时间存 "delay_minutes" (Int)，绝对时间存 "time" (HH:mm)。
+    2. 【记账】(accounting)：提取 "item" 和 "price"。
+    3. 【闲聊】(chat)：**请阅读历史记录**，像正常人一样对话，将回复内容存入 "reply"。
 
-    JSON 输出示例：
-    {"tool": "alarm", "args": {"delay_minutes": 20}}
-    {"tool": "accounting", "args": {"item": "打车", "price": 35.5}}
-    {"tool": "chat", "args": {"reply": "你好。"}}
+    JSON 格式示例：
+    {"tool": "alarm", "args": {"delay_minutes": 10}}
+    {"tool": "chat", "args": {"reply": "你好小明，我记得你。"}}
     """
+    
+    private var backgroundObserver: NSObjectProtocol?
     
     // MARK: - 初始化
     init() {
@@ -66,6 +70,26 @@ class ChatViewModel: ObservableObject {
         // 自动加载默认模型
         if let url = defaultModelUrl {
             Task { try? await loadModel(modelUrl: url) }
+        }
+        
+        setupLifecycleObserver()
+    }
+    
+    deinit {
+        if let observer = backgroundObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+    
+    private func setupLifecycleObserver() {
+        // 监听 "App 即将失去活跃" (切后台前的一瞬间)
+        backgroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            print("📱 App 即将进入后台，正在停止 LLM...")
+            self?.stop() // 调用你的 stop 方法，取消 Task
         }
     }
     
@@ -148,6 +172,8 @@ class ChatViewModel: ObservableObject {
         // 2. 构建 Prompt (建议带上历史记录，让 AI 有记忆)
         // 这里简单处理，如果想做多轮对话，buildQwenPrompt 需要读取 history
         let fullPrompt = buildQwenPrompt(userText: text)
+        
+        print("prompt: \(fullPrompt)")
         
         generationTask = Task {
             var fullResponseBuffer = ""
@@ -235,6 +261,34 @@ class ChatViewModel: ObservableObject {
                     
                     // B. 更新 UI 和执行业务 (回到 MainActor)
                     await MainActor.run {
+                        var displayContent: String? = nil
+                        var shouldHide = false
+                        
+                        switch intent {
+                        case .chat(let args):
+                            // 1. 闲聊模式：UI 显示 args.reply，不隐藏
+                            displayContent = args.reply
+                            shouldHide = false
+                            
+                        case .accounting, .alarm:
+                            // 2. 功能模式：UI 隐藏气泡 (因为有卡片显示了)，但历史要存 JSON
+                            shouldHide = true
+                            
+                        case .unknown:
+                            // 3. 解析失败：显示原始文本用于调试
+                            shouldHide = false
+                        }
+                        
+                        // 构造消息：content 存原始 JSON (维护上下文)，uiContent 存回复 (给用户看)
+                        let aiMsg = ChatMessage(role: .assistant,
+                                                content: finalCleanText, // 存 {"tool":...}
+                                                uiContent: displayContent,    // 存 "你好"
+                                                isHidden: shouldHide)         // 设为隐藏
+                        self.history.append(aiMsg)
+                        
+                        // 2. 清空流式显示的缓存 (防止界面上残留)
+                        self.messageLog = ""
+                        
                         self.handleIntent(intent)
                     }
                 } else {
@@ -343,29 +397,38 @@ class ChatViewModel: ObservableObject {
     // MARK: - Prompt 构建逻辑 (放在 Manager 里)
 
     private func buildQwenPrompt(userText: String) -> String {
-        // 1. 获取当前时间
+        // 1. System (带时间)
         let timeStr = getCurrentTimeStr()
+        let dynamicSystem = systemPrompt.replacingOccurrences(of: "{{current_time}}", with: timeStr)
         
-        // 2. 替换 System Prompt 中的时间占位符
-        let dynamicSystemPrompt = systemPrompt.replacingOccurrences(of: "{{current_time}}", with: timeStr)
+        // ✅ 修复：确保 System 后有换行
+        var fullPrompt = "<|im_start|>system\n\(dynamicSystem)<|im_end|>\n"
         
-        var fullPrompt = "<|im_start|>system\n\(dynamicSystemPrompt)<|im_end|>\n"
-                
-        // 2. 拼接历史记忆 (核心修改)
-        // 逻辑：从 history 中取出最近的对话，但要【排除】刚刚用户发的这一条
-        // 因为刚刚发的那一条（userText）会在步骤 3 放在最后作为“触发器”
+        // 2. History (清洗与伪造)
+        // 必须 dropLast，因为当前问题在第 3 步加
+        let recentHistory = history.dropLast().suffix(6)
         
-        // A. 去掉最后一条(也就是当前这一条)，只取之前的
-        // B. suffix(10): 只取最近 10 条，防止 Prompt 太长爆显存 (滑动窗口)
-        let contextMessages = history.dropLast().suffix(10)
-        
-        for msg in contextMessages {
-            // Qwen 格式: <|im_start|>role\nContent<|im_end|>\n
-            // msg.role.rawValue 应该是 "user" 或 "assistant"
-            fullPrompt += "<|im_start|>\(msg.role.rawValue)\n\(msg.content)<|im_end|>\n"
+        for msg in recentHistory {
+            var content = msg.content
+            
+            // 🛠️ 【关键欺骗】如果历史记录是纯文本，强制包装成 JSON
+            // 这样模型看到的所有历史都是合规的 JSON，它就会乖乖听话
+            if msg.role == .assistant && !content.trimmingCharacters(in: .whitespaces).hasPrefix("{") {
+                // 伪造成 chat 工具的输出
+                // 注意：这里要转义引号，为了简单演示直接拼接
+                content = "{\"tool\": \"chat\", \"args\": {\"reply\": \"\(content)\"}}"
+            }
+            
+            if msg.isHidden {
+                continue
+            }
+            
+            // ✅ 修复：确保前后都有换行
+            fullPrompt += "<|im_start|>\(msg.role.rawValue)\n\(content)<|im_end|>\n"
         }
         
-        // 3. 拼接当前用户的新问题 (触发器)
+        // 3. Trigger
+        // ✅ 修复：确保 Assistant 后有换行
         fullPrompt += "<|im_start|>user\n\(userText)<|im_end|>\n<|im_start|>assistant\n"
         
         return fullPrompt
